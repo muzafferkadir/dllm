@@ -4,7 +4,10 @@ import multiprocessing
 import os
 import random
 import re
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None  # Windows compatibility
 import string
 import time
 
@@ -15,8 +18,9 @@ def run_test(test_func_name, code_str, result_dict, cwd_path, rank):
 
     def target():
         try:
-            soft, hard = 1_000_000_000, 1_000_000_000
-            resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+            if resource is not None:
+                soft, hard = 1_000_000_000, 1_000_000_000
+                resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
             os.chdir(cwd_path)
             local_ns = {}
             exec(code_str, local_ns)

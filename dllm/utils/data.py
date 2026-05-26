@@ -235,13 +235,13 @@ def default_sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True) -> dict
         dict with keys: input_ids, labels, and optionally prompt_len
     """
     prompt_response_tokens = tokenizer.apply_chat_template(
-        row["messages"], tokenize=True, add_generation_prompt=False
+        row["messages"], tokenize=True, add_generation_prompt=False, return_dict=False
     )
     labels = prompt_response_tokens.copy()
 
     if mask_prompt_loss:
         prompt_tokens = tokenizer.apply_chat_template(
-            row["messages"][:-1], tokenize=True, add_generation_prompt=True
+            row["messages"][:-1], tokenize=True, add_generation_prompt=True, return_dict=False
         )
         labels[: len(prompt_tokens)] = [-100] * len(prompt_tokens)
         return {

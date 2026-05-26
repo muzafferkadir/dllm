@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import torch
 import transformers
 import tyro
 
@@ -9,6 +10,7 @@ A2D_CONFIG_MAP = {
     "llama": dllm.pipelines.a2d.A2DLlamaConfig,
     "qwen2": dllm.pipelines.a2d.A2DQwen2Config,
     "qwen3": dllm.pipelines.a2d.A2DQwen3Config,
+    "qwen3_5_text": dllm.pipelines.a2d.A2DQwen3_5Config,
 }
 
 
@@ -29,15 +31,40 @@ def main():
     args = tyro.cli(ScriptArguments)
     dllm.utils.print_args(args)
 
-    # Load source model
-    src_model = transformers.AutoModelForCausalLM.from_pretrained(
-        args.model_name_or_path,
-        dtype="bfloat16",
-    )
+    # Load source config to detect model type
+    src_config_dict = transformers.AutoConfig.from_pretrained(args.model_name_or_path).to_dict()
+    is_multimodal = src_config_dict.get("model_type") in ("qwen3_5", "qwen3_5_moe")
+
+    if is_multimodal:
+        # Multimodal model: extract text backbone
+        print(f"Detected multimodal model ({src_config_dict['model_type']}), extracting text backbone...")
+        src_full_model = transformers.AutoModelForCausalLM.from_pretrained(
+            args.model_name_or_path,
+            torch_dtype=torch.bfloat16,
+        )
+        # Get text model and its config
+        src_text_model = src_full_model.model.language_model if hasattr(src_full_model.model, 'language_model') else src_full_model.model
+        src_config = src_text_model.config
+        # A2D LMHeadModel wraps the text model under "model.", so add prefix
+        raw_sd = src_text_model.state_dict()
+        src_state_dict = {f"model.{k}": v for k, v in raw_sd.items()}
+        # Copy lm_head
+        if hasattr(src_full_model, 'lm_head'):
+            for k, v in src_full_model.lm_head.state_dict().items():
+                src_state_dict[f"lm_head.{k}"] = v
+        del src_full_model, src_text_model  # free memory
+    else:
+        # Standard causal LM
+        src_model = transformers.AutoModelForCausalLM.from_pretrained(
+            args.model_name_or_path,
+            dtype="bfloat16",
+        )
+        src_config = src_model.config
+        src_state_dict = src_model.state_dict()
+
     src_tokenizer = transformers.AutoTokenizer.from_pretrained(
         args.model_name_or_path,
     )
-    src_config = src_model.config
 
     # Remove unused HF fields
     for k in ["auto_map", "architectures"]:
@@ -58,7 +85,7 @@ def main():
 
         if not args.random_init:
             missing, unexpected = tgt_model.load_state_dict(
-                src_model.state_dict(), strict=False
+                src_state_dict, strict=False
             )
             print("missing:", missing)
             print("unexpected:", unexpected)
